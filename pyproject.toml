@@ -4,5 +4,6 @@ version = "0.1.0"
 description = "Cambodia data pipeline practicing Apache Airflow orchestration"
 requires-python = ">=3.11"
 dependencies = [
+    "dbt-postgres>=1.11.0",
     "pandas>=3.0.6",
 ]
