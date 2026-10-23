@@ -112,3 +112,26 @@ uv run dbt debug --project-dir cambodia_dw
 
 # 5. Open UI
 #    http://localhost:8080  → airflow / airflow
+
+
+## Day 8 — Population extractor
+
+**Built:**
+- `scripts/extract_population.py` — pandas extractor: reads `data/raw/population_by_province_2024.csv`, creates `raw` schema, writes to `raw.population_by_province`, verifies row count post-load.
+- `sql/verify_population.sql` — independent psql verification query (top 5 by population).
+
+**Decisions:**
+- `to_sql(if_exists="replace", index=False)` — idempotent full refresh for static reference data (25 rows, 2024 snapshot). Not `append` (duplicates on re-run) or `fail` (errors on re-run).
+- `index=False` — avoids writing pandas DataFrame index as a column.
+- DB URL from `WAREHOUSE_DB_URL` env var (Option B — set per shell session), never hardcoded.
+- Schema `raw` separate from `dbt_dev` — clear layering: raw = source-of-truth, dbt = transformed.
+- Verification is a **separate** step (`sql/verify_population.sql`), not embedded in the extractor — separation of concerns.
+
+**Notes:**
+- pandas `to_sql` preserves DataFrame column names exactly → capitalized columns (`Province`, `Population`) require double-quoted references in psql. Unquoted identifiers fold to lowercase in PostgreSQL.
+- PowerShell → `docker exec` → psql is a 3-layer quoting hazard. Solution: `.sql` file + `Get-Content | docker exec -i` — arguments survive intact, and the query is reusable.
+
+**Commands:**
+- Set URL: `$env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"`
+- Run: `uv run python scripts/extract_population.py`
+- Verify: `Get-Content sql\verify_population.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
