@@ -1,0 +1,121 @@
+"""
+Exchange-rate extractor — loads raw NBC USD/KHR CSV into the warehouse.
+
+Reads:  data/raw/khmer_riel_usd_exchange_rate_2003_2023.csv
+Writes: raw.exchange_rate in the warehouse PostgreSQL
+
+Note on defects: this source has DOCUMENTED defects (Day 3, docs/source-notes.md):
+  - 16 inverted bid/ask rows
+  - 49 missing days (April 2008 fully absent + scattered)
+  - 2,109 rows with inconsistent midpoint rounding
+  - spread column semantics unknown
+These are loaded AS-IS. Cleaning belongs in dbt, not in raw extraction.
+
+Requires WAREHOUSE_DB_URL environment variable. Set it before running:
+  $env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"
+
+Run:  uv run python scripts/extract_exchange_rate.py
+"""
+
+import os
+import sys
+from pathlib import Path
+
+import pandas as pd
+from sqlalchemy import create_engine, text, Date
+
+from validators import validate_exchange_rate
+
+
+CSV_PATH = Path("data/raw/khmer_riel_usd_exchange_rate_2003_2023.csv")
+SCHEMA = "raw"
+TABLE = "exchange_rate"
+
+
+def get_db_url() -> str:
+    url = os.environ.get("WAREHOUSE_DB_URL")
+    if not url:
+        print("ERROR: WAREHOUSE_DB_URL is not set.", file=sys.stderr)
+        print("Set it in PowerShell with:", file=sys.stderr)
+        print(
+            '  $env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"',
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return url
+
+
+def main() -> None:
+    db_url = get_db_url()
+    engine = create_engine(db_url)
+
+    print("=" * 60)
+    print("EXCHANGE RATE EXTRACTOR")
+    print("=" * 60)
+
+    # 1. Read — encoding="utf-8-sig" strips the BOM on the 'date' header
+    print(f"\n[1] Reading CSV: {CSV_PATH}")
+    df = pd.read_csv(CSV_PATH, encoding="utf-8-sig")
+    print(f"    Rows: {len(df)}, Columns: {len(df.columns)}")
+
+    # 2. Normalize date column to datetime64 (kept as datetime64, cast to DATE on write)
+    df["date"] = pd.to_datetime(df["date"], format="%m/%d/%Y")
+    print(
+        f"    Date column parsed to {df['date'].dtype} — will be written as DATE")
+
+    # 3. Validate source (fail-fast, before writing)
+    print("\n[2] Validating source data")
+    errors = validate_exchange_rate(df)
+    if errors:
+        print(f"    ✗ {len(errors)} validation failure(s):", file=sys.stderr)
+        for e in errors:
+            print(f"      - {e}", file=sys.stderr)
+        print("\nAborting — no data written to warehouse.", file=sys.stderr)
+        sys.exit(1)
+    print("    ✓ Source passed all checks (including documented defect counts)")
+
+    # 4. Ensure schema
+    print(f"\n[3] Ensuring schema '{SCHEMA}' exists")
+    with engine.begin() as conn:
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
+
+    # 5. Load — dtype forces PostgreSQL column type to DATE, not TIMESTAMP
+    print(f"\n[4] Writing to {SCHEMA}.{TABLE} (if_exists='replace')")
+    df.to_sql(
+        name=TABLE,
+        con=engine,
+        schema=SCHEMA,
+        if_exists="replace",
+        index=False,
+        dtype={"date": Date},
+    )
+
+    # 6. Read back and validate
+    print("\n[5] Verifying loaded data in warehouse")
+    loaded = pd.read_sql(f"SELECT * FROM {SCHEMA}.{TABLE}", engine)
+    print(f"    Rows read back: {len(loaded)}")
+
+    loaded_errors = validate_exchange_rate(loaded)
+    if loaded_errors:
+        print(
+            f"    ✗ {len(loaded_errors)} validation failure(s) on loaded data:",
+            file=sys.stderr,
+        )
+        for e in loaded_errors:
+            print(f"      - {e}", file=sys.stderr)
+        sys.exit(1)
+    print("    ✓ Loaded data matches source expectations")
+
+    if len(loaded) != len(df):
+        print(
+            f"\n✗ Row count mismatch: source={len(df)}, warehouse={len(loaded)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print(f"\n✓ Load succeeded — {len(loaded)} rows validated.")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
