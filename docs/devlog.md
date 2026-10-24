@@ -135,3 +135,25 @@ uv run dbt debug --project-dir cambodia_dw
 - Set URL: `$env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"`
 - Run: `uv run python scripts/extract_population.py`
 - Verify: `Get-Content sql\verify_population.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
+
+## Day 9 — Population validation and rerun
+
+**Built:**
+- `scripts/validators.py` — reusable `validate_population(df)` returning a list of failure messages. Checks: required columns, nulls, duplicate names, duplicate codes, code format, **code contiguity** (all 25 KH-1..KH-25 present), row count, integer dtype, positivity, exact population sum (17,280,543).
+- `scripts/extract_population.py` — updated to validate **before** load (fail-fast, no bad data written) and **after** load (read back from warehouse, validate again).
+- `sql/verify_no_duplicates.sql` — aggregate count query (25/25/25) + detail query (should return 0 rows).
+
+**Decisions:**
+- Validation lives in `validators.py`, not inline — reusable across DAG, unit tests, and CLI.
+- Validator returns a **list** of all failures, not just the first — see everything wrong in one run.
+- `EXPECTED_PROVINCE_CODES = {f"KH-{i}" for i in range(1, 26)}` — **contiguity check**, not just format. A gap (`KH-13` missing, `KH-26` present) passes regex but fails this.
+- Exact population sum, not a range — static snapshot, not a live feed. If it changes, we want to know.
+- Validate **loaded data** too (read back from warehouse) — proves the write didn't corrupt anything.
+
+**Notes:**
+- **Idempotency comes from `if_exists="replace"`**, not from a dedup step. Rerunning drops and recreates the table. The duplicate-check SQL is **proof** of idempotency, not the mechanism.
+- Two-layer validation: pre-load (source) catches upstream corruption; post-load (warehouse) catches corruption introduced by the write.
+
+**Commands:**
+- Run: `uv run python scripts/extract_population.py` (twice, to prove idempotency)
+- Duplicate check: `Get-Content sql\verify_no_duplicates.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
