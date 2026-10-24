@@ -157,3 +157,29 @@ uv run dbt debug --project-dir cambodia_dw
 **Commands:**
 - Run: `uv run python scripts/extract_population.py` (twice, to prove idempotency)
 - Duplicate check: `Get-Content sql\verify_no_duplicates.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
+
+## Day 10 — Exchange-rate extractor + dim_date
+
+**Built:**
+- `scripts/extract_exchange_rate.py` — BOM handling, date parsing to `datetime64`, `to_sql(dtype={"date": Date})` to force PostgreSQL `DATE` (not `TIMESTAMP`), validation pre + post load.
+- `scripts/validators.py` — added `validate_exchange_rate()` — **strict-with-documented-exceptions**.
+- `sql/create_dim_date.sql` — `generate_series` date spine 2003-04-01 → 2023-12-31, integer surrogate key `date_key` (YYYYMMDD), computed attributes.
+- `sql/verify_exchange_rate_join.sql` — forward join (unmatched = 0), sample enrichment, reverse join (missing days visible).
+
+**Decisions:**
+- **Load as-is** — the 16 inverted rows, 49 missing days, 2,109 midpoint inconsistencies are loaded, not cleaned. Raw layer is a faithful copy of source; cleaning belongs in dbt.
+- **`dtype={"date": Date}`** — forced `DATE` type at `to_sql`. Alternative `.dt.date` (object dtype) rejected — keeps pandas column as `datetime64`, cleaner and faster.
+- **Strict-with-documented-exceptions** — each known defect has an expected count (16, 49, 7531). Fails on drift, passes on known defects.
+- **dim_date in `dim` schema** — separate from `raw` (source) and `dbt_dev` (transformed). Surrogate key + natural key both present.
+
+**Verification:**
+- `exchange_rows = 7531`, `joined_rows = 7531`, `unmatched_rows = 0` → every fact joins to dim_date
+- Reverse `LEFT JOIN` reveals exactly the 49 documented missing days, confirming Day 3's analysis at the day level
+- Leap day `2008-02-29` correctly modeled in dim_date (proves calendar reality handled)
+
+**Interview line:** *"A fact table can't reveal its own gaps — 7,531 rows all look complete. A dimension gives you a completeness spec: LEFT JOIN from dim to fact reveals exactly which days are missing. That's the reverse-join diagnostic, not just a verification."*
+
+**Commands:**
+- Build dim: `Get-Content sql\create_dim_date.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
+- Verify join: `Get-Content sql\verify_exchange_rate_join.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
+- Extract: `uv run python scripts\extract_exchange_rate.py`
