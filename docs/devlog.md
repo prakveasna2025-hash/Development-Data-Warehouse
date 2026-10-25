@@ -183,3 +183,30 @@ uv run dbt debug --project-dir cambodia_dw
 - Build dim: `Get-Content sql\create_dim_date.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
 - Verify join: `Get-Content sql\verify_exchange_rate_join.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
 - Extract: `uv run python scripts\extract_exchange_rate.py`
+
+## Day 13 — Validation: schema and counts
+
+**Built:**
+- `sql/create_dim_province.sql` — canonical 25-province dimension, **seeded from controlled reference data**, not derived from raw. Surrogate key `province_key SERIAL`, natural key `province_code UNIQUE`, `province_name UNIQUE`.
+- `sql/verify_population_join.sql` — forward join (unmatched = 0), sample enrichment, **name governance check** (source names must match canonical dimension names).
+- `scripts/validate_warehouse.py` — 4-layer warehouse health check: schema contract, row count > 0, source-CSV reconciliation, dimension join integrity. Exits 1 on any failure. **Read-only — every query is SELECT.**
+
+**Decisions:**
+- **Canonical seed over derived-from-raw.** Dimension is the *spec*, not a consequence of raw. Governance requires reviewed changes; deriving from raw would let a bad CSV silently redefine the dimension.
+- **`TEXT` not `VARCHAR` in the schema contract** — pandas 3.x `str` dtype maps to PostgreSQL `TEXT` via `to_sql`. TEXT and VARCHAR are storage-identical in Postgres; VARCHAR adds only a length check. Encode what the toolchain produces, not aspirational types.
+- **Three testing layers made explicit:**
+  1. Unit tests (functions, no DB) — future
+  2. Data quality (`validators.py` — DataFrame, pre-load) — exists
+  3. Warehouse health (`validate_warehouse.py` — DB state, post-load) — this script
+
+**Verification:**
+- `dim_province` = 25 rows, `unmatched_rows = 0` against `raw.population_by_province`
+- Name governance query returns 0 rows — source province names match canonical names exactly
+- Health check: 4/4 schema, 4/4 row count, 2/2 reconciliation, 2/2 dimension joins — `RESULT: ALL CHECKS PASSED`
+
+**Interview line:** *"I have three testing layers — unit tests on pure functions, DataFrame validation before load, and warehouse health checks after load. The third caught two false positives on its first run: my schema contract expected VARCHAR but pandas 3.x writes TEXT. I fixed the contract, not the warehouse — TEXT is the idiomatic Postgres default and storage-equivalent to VARCHAR. The lesson: contracts should encode what the toolchain produces, not aspirational types, or you generate false alarms that train people to ignore alerts."*
+
+**Commands:**
+- Build dim: `Get-Content sql\create_dim_province.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
+- Join verify: `Get-Content sql\verify_population_join.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
+- Health check: `uv run python scripts\validate_warehouse.py` (requires `$env:WAREHOUSE_DB_URL`)
