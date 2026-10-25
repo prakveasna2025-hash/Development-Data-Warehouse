@@ -21,8 +21,7 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-from validator_pop import validate_population
-
+from validators import validate_population
 
 CSV_PATH = Path("data/raw/population_by_province_2024.csv")
 SCHEMA = "raw"
