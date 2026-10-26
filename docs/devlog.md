@@ -210,3 +210,30 @@ uv run dbt debug --project-dir cambodia_dw
 - Build dim: `Get-Content sql\create_dim_province.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
 - Join verify: `Get-Content sql\verify_population_join.sql | docker exec -i cambodia_dw_postgres psql -U airflow -d airflow`
 - Health check: `uv run python scripts\validate_warehouse.py` (requires `$env:WAREHOUSE_DB_URL`)
+
+
+
+## Day 14 — Validation: duplicates, nulls, references
+
+**Built:**
+- `scripts/validate_warehouse.py` — expanded from 4 sections to 7. New: nulls per column, duplicates per natural-key column, explicit reference checks (`NOT IN (SELECT dim_col FROM dim)`) — distinct from join checks (which find orphans by outcome; reference checks find keys outside the dim's value set).
+- `tests/conftest.py` — pytest fixtures: `valid_population_df` (25 rows), `valid_exchange_df` (7,531 rows, module-scope).
+- `tests/test_validators.py` — 12 tests. Each starts from clean baseline, injects one defect, asserts the specific error. Covers: null, dup code, dup name, bad code format, missing set member, wrong row count, wrong sum, dup date, extra inverted row.
+- `scripts/__init__.py` — makes `scripts/` importable as a package (needed for `from scripts.validators import ...`).
+
+**Decisions:**
+- **pytest as `--dev` dependency** — dev-only, not shipped in production images.
+- **`pythonpath = ["."]` in `pyproject.toml`** — required because pytest doesn't put rootdir on `sys.path` by default. With `__init__.py`, this makes `from scripts.validators import ...` work consistently.
+- **Reference check distinct from join check** — join finds facts with no dim match; reference finds fact keys outside the dim's value set. Same result here, different intent/message. Explicit reference checks read better in error output.
+- **Per-column null/duplicate checks** — failure names the exact column, not just "row problem."
+
+**Verification:**
+- `uv run pytest tests/ -v` → **12 passed** in 0.11s
+- `uv run python scripts/validate_warehouse.py` → **7 sections, ALL CHECKS PASSED**
+- Manual corruption demo: corrupted CSV (dup row, null, bad code, dup code) → extractor aborted with 9 specific errors in one run, exit 1, warehouse count remained 25
+
+**Interview line:** *"Testing validators is testing assertions. Each test builds a valid baseline, mutates one field, and asserts the specific failure message — not just 'validation failed' but 'duplicate province_code.' I also run periodic end-to-end demos: corrupt a source file, run the extractor, confirm it fails fast with multi-issue errors and the warehouse is untouched. The pytest tests are the durable artifact; the demo proves the wiring — that validation is actually invoked in the control flow, not just defined and ignored."*
+
+**Commands:**
+- Tests: `uv run pytest tests/ -v`
+- Warehouse health: `uv run python scripts/validate_warehouse.py`

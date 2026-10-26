@@ -40,3 +40,32 @@ Strong answer:
 ## The real production system layers!:
 unit tests    →  validators.py  →  extractor  →  warehouse  →  validate_warehouse.py  →  dbt tests
   (code)         (pre-load)                       (DB)         (post-load)             (transform)
+
+## Hardcoding meaning:
+In programming and software development, hardcoding means writing data, values, or configuration settings directly into the source code instead of getting them from an external source (like a database, configuration file, environment variable, or user input).
+
+Because the value is permanently baked right into the code, the only way to change it is to rewrite or edit the code itself.
+
+
+## Pytest dependendancy:
+Why --dev: pytest is a test runner, not runtime. It shouldn't ship in production images. In pyproject.toml it goes under [dependency-groups] dev = [...], separate from runtime dependencies. Standard pattern.
+
+
+## Corruption or Error handling
+In data engineering, corrupting data (or injecting corruption) means intentionally introducing errors, missing pieces, or invalid values into a dataset to test whether your pipeline's validation rules and error-handling mechanisms actually work.
+
+It is a core part of defensive testing (often called chaos engineering or negative testing).
+
+## Demo and Pytest:
+Why this matters — the interview story
+What the demo proves that pytest doesn't:
+
+--pytest proves	                               
+Each validator catches its specific defect
+Errors are correctly formed	
+Unit tests are runnable on every commit	
+
+-- Demo proves
+The extractor aborts without writing when validation fails
+Multiple defects surface together in one run
+Fail-fast holds the line between bad data and the warehouse
