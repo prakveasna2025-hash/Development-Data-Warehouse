@@ -10,10 +10,13 @@ in a real DE stack:
   3. Warehouse health  — this script, on DB state, post-load
 
 Checks:
-  [1] Schema     — required columns and PostgreSQL types per table
-  [2] Row counts — every table has > 0 rows
-  [3] Reconciliation — source CSV row count == warehouse row count
-  [4] Dim joins  — every fact row resolves to a dimension row
+  [1] Schema          — required columns and PostgreSQL types per table
+  [2] Row counts      — every table has > 0 rows
+  [3] Reconciliation  — source CSV row count == warehouse row count
+  [4] Dimension joins — every fact row resolves to a dimension row
+  [5] Nulls           — no NULL values in NOT-NULL-intent columns
+  [6] Duplicates      — no duplicate values in natural-key columns
+  [7] References      — fact keys are a subset of dimension keys
 
 Exit codes: 0 = all pass, 1 = any failure.
 
@@ -32,14 +35,16 @@ def get_db_url() -> str:
     url = os.environ.get("WAREHOUSE_DB_URL")
     if not url:
         print("ERROR: WAREHOUSE_DB_URL is not set.", file=sys.stderr)
-        print('  $env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"', file=sys.stderr)
+        print(
+            '  $env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"',
+            file=sys.stderr,
+        )
         sys.exit(1)
     return url
 
 
 # ---------------------------------------------------------------------------
-# Contracts — the schema these tables are SUPPOSED to have.
-# When these change, that change is a reviewed commit to this file.
+# Contracts — what these tables are SUPPOSED to have.
 # ---------------------------------------------------------------------------
 EXPECTED_SCHEMAS = {
     "raw.population_by_province": {
@@ -78,11 +83,11 @@ EXPECTED_SCHEMAS = {
 
 SOURCE_CSVS = {
     "raw.population_by_province": "data/raw/population_by_province_2024.csv",
-    "raw.exchange_rate":          "data/raw/khmer_riel_usd_exchange_rate_2003_2023.csv",
+    "raw.exchange_rate": "data/raw/khmer_riel_usd_exchange_rate_2003_2023.csv",
 }
 
 CSV_ENCODINGS = {
-    "raw.exchange_rate": "utf-8-sig",   # BOM on the date header
+    "raw.exchange_rate": "utf-8-sig",
 }
 
 DIM_JOIN_CHECKS = [
@@ -102,6 +107,48 @@ DIM_JOIN_CHECKS = [
     },
 ]
 
+# ---------------------------------------------------------------------------
+# [5] Null checks — columns that MUST NOT contain NULLs.
+# ---------------------------------------------------------------------------
+NULL_CHECKS = {
+    "raw.population_by_province": ["Province", "Population", "province_code"],
+    "raw.exchange_rate": ["date", "purchase", "sale", "midpoint", "exchange_rate"],
+    "dim.dim_date": ["date", "date_key", "year", "month", "day"],
+    "dim.dim_province": ["province_code", "province_name"],
+}
+
+# ---------------------------------------------------------------------------
+# [6] Duplicate checks — columns that MUST be UNIQUE.
+# ---------------------------------------------------------------------------
+DUPLICATE_CHECKS = {
+    "raw.population_by_province": ["Province", "province_code"],
+    "raw.exchange_rate": ["date"],
+    "dim.dim_date": ["date", "date_key"],
+    "dim.dim_province": ["province_code", "province_name"],
+}
+
+# ---------------------------------------------------------------------------
+# [7] Reference checks — fact keys MUST be a subset of dimension keys.
+# (Explicit set-membership; complements the join check which finds
+# orphaned rows. NOT IN fails if dim has NULLs, but dim keys are NOT NULL.)
+# ---------------------------------------------------------------------------
+REFERENCE_CHECKS = [
+    {
+        "name": "raw.population_by_province.province_code ⊆ dim.dim_province",
+        "fact": "raw.population_by_province",
+        "fact_col": "province_code",
+        "dim": "dim.dim_province",
+        "dim_col": "province_code",
+    },
+    {
+        "name": "raw.exchange_rate.date ⊆ dim.dim_date",
+        "fact": "raw.exchange_rate",
+        "fact_col": "date",
+        "dim": "dim.dim_date",
+        "dim_col": "date",
+    },
+]
+
 
 # ---------------------------------------------------------------------------
 # Checks — each returns a list of error strings (empty = pass)
@@ -109,10 +156,13 @@ DIM_JOIN_CHECKS = [
 def check_schema(engine, table: str, expected: dict) -> list[str]:
     schema, name = table.split(".")
     with engine.connect() as conn:
-        rows = conn.execute(text(
-            "SELECT column_name, data_type FROM information_schema.columns "
-            "WHERE table_schema = :s AND table_name = :t"
-        ), {"s": schema, "t": name}).fetchall()
+        rows = conn.execute(
+            text(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema = :s AND table_name = :t"
+            ),
+            {"s": schema, "t": name},
+        ).fetchall()
     actual = {r[0]: r[1] for r in rows}
     if not actual:
         return [f"{table}: does not exist"]
@@ -160,6 +210,46 @@ def check_dim_join(engine, chk: dict) -> list[str]:
     return [] if unmatched == 0 else [f"{chk['name']}: {unmatched} unmatched fact rows"]
 
 
+def check_nulls(engine, table: str, columns: list[str]) -> list[str]:
+    errors = []
+    with engine.connect() as conn:
+        for col in columns:
+            n = conn.execute(
+                text(f'SELECT COUNT(*) FROM {table} WHERE "{col}" IS NULL')
+            ).scalar()
+            if n:
+                errors.append(f"{table}.{col}: {n} NULL row(s)")
+    return errors
+
+
+def check_duplicates(engine, table: str, columns: list[str]) -> list[str]:
+    errors = []
+    with engine.connect() as conn:
+        for col in columns:
+            n = conn.execute(
+                text(
+                    f'SELECT COUNT(*) FROM ('
+                    f'  SELECT "{col}" FROM {table} '
+                    f'  GROUP BY "{col}" HAVING COUNT(*) > 1'
+                    f') AS dups'
+                )
+            ).scalar()
+            if n:
+                errors.append(f"{table}.{col}: {n} duplicated value(s)")
+    return errors
+
+
+def check_reference(engine, chk: dict) -> list[str]:
+    sql = (
+        f"SELECT COUNT(*) FROM {chk['fact']} f "
+        f"WHERE f.{chk['fact_col']} NOT IN "
+        f"(SELECT {chk['dim_col']} FROM {chk['dim']})"
+    )
+    with engine.connect() as conn:
+        orphans = conn.execute(text(sql)).scalar()
+    return [] if orphans == 0 else [f"{chk['name']}: {orphans} key(s) not in dimension"]
+
+
 # ---------------------------------------------------------------------------
 def main() -> None:
     engine = create_engine(get_db_url())
@@ -205,6 +295,36 @@ def main() -> None:
     print("\n[4] Dimension join checks (unmatched = 0)")
     for chk in DIM_JOIN_CHECKS:
         errs = check_dim_join(engine, chk)
+        if errs:
+            for e in errs:
+                print(f"    ✗ {e}", file=sys.stderr)
+            all_errors.extend(errs)
+        else:
+            print(f"    ✓ {chk['name']}")
+
+    print("\n[5] Null checks")
+    for table, cols in NULL_CHECKS.items():
+        errs = check_nulls(engine, table, cols)
+        if errs:
+            for e in errs:
+                print(f"    ✗ {e}", file=sys.stderr)
+            all_errors.extend(errs)
+        else:
+            print(f"    ✓ {table}")
+
+    print("\n[6] Duplicate checks")
+    for table, cols in DUPLICATE_CHECKS.items():
+        errs = check_duplicates(engine, table, cols)
+        if errs:
+            for e in errs:
+                print(f"    ✗ {e}", file=sys.stderr)
+            all_errors.extend(errs)
+        else:
+            print(f"    ✓ {table}")
+
+    print("\n[7] Reference checks (fact keys ⊆ dimension keys)")
+    for chk in REFERENCE_CHECKS:
+        errs = check_reference(engine, chk)
         if errs:
             for e in errs:
                 print(f"    ✗ {e}", file=sys.stderr)
