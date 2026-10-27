@@ -237,3 +237,35 @@ uv run dbt debug --project-dir cambodia_dw
 **Commands:**
 - Tests: `uv run pytest tests/ -v`
 - Warehouse health: `uv run python scripts/validate_warehouse.py`
+## Day 15 — DAG skeleton
+
+**Built:**
+- `dags/cambodia_pipeline_dag.py` — DAG `cambodia_pipeline`. Structure: `[extract_population, extract_exchange_rate] >> validate_warehouse` (fan-out/fan-in). All three callables raise `NotImplementedError("Wired on Day 16")` — **intentionally**.
+
+**Decisions:**
+- **Airflow 3.x import path** — `from airflow.providers.standard.operators.python import PythonOperator` (the `standard` provider package).
+- **`schedule=None`** — manual trigger only, dev-appropriate.
+- **`catchup=False`** — prevents ~365 backfill runs on activation (start_date is 2025-01-01).
+- **Timezone-aware `start_date`** — `datetime(2025, 1, 1, tzinfo=timezone.utc)`.
+- **`retries=1`, `retry_delay=1min`** — survives transient DB blips; more would hide real failures.
+- **`doc_md=__doc__`** — module docstring rendered in UI.
+- **Stubs instead of silent success** — a DAG that "succeeds" doing nothing lies; a `NotImplementedError` names exactly where the work stops.
+
+**Verified:**
+- `airflow dags list` → `cambodia_pipeline` registered, no import errors
+- `airflow dags show cambodia_pipeline` → DOT graph confirms fan-out/fan-in
+- UI Graph view displays correct structure
+
+**Known blockers for Day 16 (not fixed yet):**
+- **A. Import path** — extractors use `from validators import`, will fail inside Airflow worker
+- **B. Env var** — `WAREHOUSE_DB_URL` not present in worker
+- **C. Network** — `airflow_default` and `docker_default` are different Docker networks; worker can't reach warehouse on 5434
+- **D. Data mount** — `data/raw/*.csv` not mounted into worker
+- **E. Scripts mount** — `scripts/` not mounted into worker
+
+**Interview line:** *"A DAG whose task succeeds without loading data is worse than one that fails loudly. Stub callables raising NotImplementedError('Wired on Day 16') tell the truth — the wiring isn't done."*
+
+**Commands:**
+- List DAGs: `docker exec airflow-airflow-scheduler-1 airflow dags list | Select-String cambodia`
+- Structure: `docker exec airflow-airflow-scheduler-1 airflow dags show cambodia_pipeline`
+- UI: `http://localhost:8080`
