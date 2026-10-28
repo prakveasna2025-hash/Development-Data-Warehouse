@@ -29,15 +29,21 @@ from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import create_engine, text
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def get_db_url() -> str:
     url = os.environ.get("WAREHOUSE_DB_URL")
     if not url:
-        print("ERROR: WAREHOUSE_DB_URL is not set.", file=sys.stderr)
-        print(
-            '  $env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"',
-            file=sys.stderr,
+        logger.error("ERROR: WAREHOUSE_DB_URL is not set.")
+        logger.error(
+            '  $env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"'
         )
         sys.exit(1)
     return url
@@ -255,90 +261,90 @@ def main() -> None:
     engine = create_engine(get_db_url())
     all_errors: list[str] = []
 
-    print("=" * 70)
-    print("WAREHOUSE HEALTH CHECK")
-    print("=" * 70)
+    logger.info("=" * 70)
+    logger.info("WAREHOUSE HEALTH CHECK")
+    logger.info("=" * 70)
 
-    print("\n[1] Schema checks")
+    logger.info("\n[1] Schema checks")
     for table, expected in EXPECTED_SCHEMAS.items():
         errs = check_schema(engine, table, expected)
         if errs:
             for e in errs:
-                print(f"    ✗ {e}", file=sys.stderr)
+                logger.error(f"    ✗ {e}")
             all_errors.extend(errs)
         else:
-            print(f"    ✓ {table}")
+            logger.info(f"    ✓ {table}")
 
-    print("\n[2] Row-count checks (must be > 0)")
+    logger.info("\n[2] Row-count checks (must be > 0)")
     for table in EXPECTED_SCHEMAS:
         errs = check_row_count(engine, table)
         if errs:
             for e in errs:
-                print(f"    ✗ {e}", file=sys.stderr)
+                logger.error(f"    ✗ {e}")
             all_errors.extend(errs)
         else:
             with engine.connect() as conn:
                 n = conn.execute(
                     text(f"SELECT COUNT(*) FROM {table}")).scalar()
-            print(f"    ✓ {table}: {n:,} rows")
+            logger.info(f"    ✓ {table}: {n:,} rows")
 
-    print("\n[3] Reconciliation (source CSV count == warehouse count)")
+    logger.info("\n[3] Reconciliation (source CSV count == warehouse count)")
     for table, csv_path in SOURCE_CSVS.items():
         errs = check_reconciliation(engine, table, csv_path)
         if errs:
             for e in errs:
-                print(f"    ✗ {e}", file=sys.stderr)
+                logger.error(f"    ✗ {e}")
             all_errors.extend(errs)
         else:
-            print(f"    ✓ {table}  ==  {csv_path}")
+            logger.info(f"    ✓ {table}  ==  {csv_path}")
 
-    print("\n[4] Dimension join checks (unmatched = 0)")
+    logger.info("\n[4] Dimension join checks (unmatched = 0)")
     for chk in DIM_JOIN_CHECKS:
         errs = check_dim_join(engine, chk)
         if errs:
             for e in errs:
-                print(f"    ✗ {e}", file=sys.stderr)
+                logger.error(f"    ✗ {e}")
             all_errors.extend(errs)
         else:
-            print(f"    ✓ {chk['name']}")
+            logger.info(f"    ✓ {chk['name']}")
 
-    print("\n[5] Null checks")
+    logger.info("\n[5] Null checks")
     for table, cols in NULL_CHECKS.items():
         errs = check_nulls(engine, table, cols)
         if errs:
             for e in errs:
-                print(f"    ✗ {e}", file=sys.stderr)
+                logger.error(f"    ✗ {e}")
             all_errors.extend(errs)
         else:
-            print(f"    ✓ {table}")
+            logger.info(f"    ✓ {table}")
 
-    print("\n[6] Duplicate checks")
+    logger.info("\n[6] Duplicate checks")
     for table, cols in DUPLICATE_CHECKS.items():
         errs = check_duplicates(engine, table, cols)
         if errs:
             for e in errs:
-                print(f"    ✗ {e}", file=sys.stderr)
+                logger.error(f"    ✗ {e}")
             all_errors.extend(errs)
         else:
-            print(f"    ✓ {table}")
+            logger.info(f"    ✓ {table}")
 
-    print("\n[7] Reference checks (fact keys ⊆ dimension keys)")
+    logger.info("\n[7] Reference checks (fact keys ⊆ dimension keys)")
     for chk in REFERENCE_CHECKS:
         errs = check_reference(engine, chk)
         if errs:
             for e in errs:
-                print(f"    ✗ {e}", file=sys.stderr)
+                logger.error(f"    ✗ {e}")
             all_errors.extend(errs)
         else:
-            print(f"    ✓ {chk['name']}")
+            logger.info(f"    ✓ {chk['name']}")
 
-    print("\n" + "=" * 70)
+    logger.info("\n" + "=" * 70)
     if all_errors:
-        print(f"RESULT: {len(all_errors)} FAILURE(S)", file=sys.stderr)
-        print("=" * 70)
+        logger.error(f"RESULT: {len(all_errors)} FAILURE(S)")
+        logger.error("=" * 70)
         sys.exit(1)
-    print("RESULT: ALL CHECKS PASSED")
-    print("=" * 70)
+    logger.info("RESULT: ALL CHECKS PASSED")
+    logger.info("\n" + "=" * 70)
 
 
 if __name__ == "__main__":

@@ -24,8 +24,14 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy import create_engine, text, Date
 
-from validators import validate_exchange_rate
+from scripts.validators import validate_exchange_rate
+import logging
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 CSV_PATH = Path("data/raw/khmer_riel_usd_exchange_rate_2003_2023.csv")
 SCHEMA = "raw"
@@ -35,11 +41,10 @@ TABLE = "exchange_rate"
 def get_db_url() -> str:
     url = os.environ.get("WAREHOUSE_DB_URL")
     if not url:
-        print("ERROR: WAREHOUSE_DB_URL is not set.", file=sys.stderr)
-        print("Set it in PowerShell with:", file=sys.stderr)
-        print(
-            '  $env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"',
-            file=sys.stderr,
+        logger.error("ERROR: WAREHOUSE_DB_URL is not set.")
+        logger.info("Set it in PowerShell with:")
+        logger.error(
+            '  $env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"'
         )
         sys.exit(1)
     return url
@@ -49,38 +54,39 @@ def main() -> None:
     db_url = get_db_url()
     engine = create_engine(db_url)
 
-    print("=" * 60)
-    print("EXCHANGE RATE EXTRACTOR")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("EXCHANGE RATE EXTRACTOR")
+    logger.info("=" * 60)
 
     # 1. Read — encoding="utf-8-sig" strips the BOM on the 'date' header
-    print(f"\n[1] Reading CSV: {CSV_PATH}")
+    logger.info(f"\n[1] Reading CSV: {CSV_PATH}")
     df = pd.read_csv(CSV_PATH, encoding="utf-8-sig")
-    print(f"    Rows: {len(df)}, Columns: {len(df.columns)}")
+    logger.info(f"    Rows: {len(df)}, Columns: {len(df.columns)}")
 
     # 2. Normalize date column to datetime64 (kept as datetime64, cast to DATE on write)
     df["date"] = pd.to_datetime(df["date"], format="%m/%d/%Y")
-    print(
+    logger.info(
         f"    Date column parsed to {df['date'].dtype} — will be written as DATE")
 
     # 3. Validate source (fail-fast, before writing)
-    print("\n[2] Validating source data")
+    logger.info("\n[2] Validating source data")
     errors = validate_exchange_rate(df)
     if errors:
-        print(f"    ✗ {len(errors)} validation failure(s):", file=sys.stderr)
+        logger.error(f"    ✗ {len(errors)} validation failure(s):")
         for e in errors:
-            print(f"      - {e}", file=sys.stderr)
-        print("\nAborting — no data written to warehouse.", file=sys.stderr)
+            logger.error(f"      - {e}")
+        logger.error("\nAborting — no data written to warehouse.")
         sys.exit(1)
-    print("    ✓ Source passed all checks (including documented defect counts)")
+    logger.info(
+        "    ✓ Source passed all checks (including documented defect counts)")
 
     # 4. Ensure schema
-    print(f"\n[3] Ensuring schema '{SCHEMA}' exists")
+    logger.info(f"\n[3] Ensuring schema '{SCHEMA}' exists")
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
 
     # 5. Load — dtype forces PostgreSQL column type to DATE, not TIMESTAMP
-    print(f"\n[4] Writing to {SCHEMA}.{TABLE} (if_exists='replace')")
+    logger.info(f"\n[4] Writing to {SCHEMA}.{TABLE} (if_exists='replace')")
     df.to_sql(
         name=TABLE,
         con=engine,
@@ -91,30 +97,29 @@ def main() -> None:
     )
 
     # 6. Read back and validate
-    print("\n[5] Verifying loaded data in warehouse")
+    logger.info("\n[5] Verifying loaded data in warehouse")
     loaded = pd.read_sql(f"SELECT * FROM {SCHEMA}.{TABLE}", engine)
-    print(f"    Rows read back: {len(loaded)}")
+    logger.info(f"    Rows read back: {len(loaded)}")
 
     loaded_errors = validate_exchange_rate(loaded)
     if loaded_errors:
-        print(
-            f"    ✗ {len(loaded_errors)} validation failure(s) on loaded data:",
-            file=sys.stderr,
+        logger.error(
+            f"    ✗ {len(loaded_errors)} validation failure(s) on loaded data:"
         )
         for e in loaded_errors:
-            print(f"      - {e}", file=sys.stderr)
+            logger.error(f"      - {e}")
         sys.exit(1)
-    print("    ✓ Loaded data matches source expectations")
+    logger.info("    ✓ Loaded data matches source expectations")
 
     if len(loaded) != len(df):
-        print(
+        logger.error(
             f"\n✗ Row count mismatch: source={len(df)}, warehouse={len(loaded)}",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    print(f"\n✓ Load succeeded — {len(loaded)} rows validated.")
-    print("=" * 60)
+    logger.info(f"\n✓ Load succeeded — {len(loaded)} rows validated.")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
