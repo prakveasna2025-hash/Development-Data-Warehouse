@@ -19,3 +19,8 @@ services:
 
 volumes:
   pgdata:
+
+networks:
+  default:
+    name: shared_network
+    external: true
