@@ -269,3 +269,31 @@ uv run dbt debug --project-dir cambodia_dw
 - List DAGs: `docker exec airflow-airflow-scheduler-1 airflow dags list | Select-String cambodia`
 - Structure: `docker exec airflow-airflow-scheduler-1 airflow dags show cambodia_pipeline`
 - UI: `http://localhost:8080`
+
+## Day 16 — Retries, logging, full run
+
+**Built:**
+- Structured logging in 3 scripts (extract_population.py, extract_exchange_rate.py, validate_warehouse.py) — Python logging module with timestamp, level, logger name
+- docker/airflow/docker-compose.yaml — scripts/ and data/ volume mounts; shared_network external
+- docker/docker-compose.yml — shared_network external
+- docker/airflow/.env — WAREHOUSE_DB_URL, PYTHONPATH, AIRFLOW__CORE__LOAD_EXAMPLES=False (gitignored)
+- dags/cambodia_pipeline_dag.py — real imports; retries=2, retry_delay=1min, retry_exponential_backoff=True, max_retry_delay=10min
+
+**Decisions:**
+- Two-endpoint rule: WAREHOUSE_DB_URL endpoint-relative — host 127.0.0.1:5434, worker cambodia_dw_postgres:5432
+- External network over per-service networks — decouples the two compose files
+- logging module over print — timestamps, levels, logger names in Task Log
+- Exponential backoff — first retry catches blips, later ones catch slow recovery, capped at 10min
+- AIRFLOW__CORE__LOAD_EXAMPLES=False — disables ~80 example DAGs
+
+**Verification:**
+- Each script from worker: extract_population 25 rows, extract_exchange_rate 7531 rows, validate_warehouse ALL CHECKS PASSED
+- DAG triggered from UI → state=success, ~2 min end-to-end
+- CLI action logger fix (metadata Postgres volume password): ALTER USER airflow WITH PASSWORD 'airflow'
+
+**Interview line:** Connection strings are endpoint-relative: 127.0.0.1:5434 from host, cambodia_dw_postgres:5432 from container. Cross-container uses service name + internal port, resolved by Docker DNS.
+
+**Commands:**
+- Test script from worker: docker exec airflow-airflow-worker-1 python /opt/airflow/scripts/SCRIPT.py
+- Trigger: UI at http://localhost:8080
+- Check run: docker exec airflow-airflow-scheduler-1 airflow dags list-runs cambodia_pipeline --no-backfill
