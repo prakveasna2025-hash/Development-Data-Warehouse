@@ -1,0 +1,34 @@
+version: 2
+
+sources:
+  - name: raw
+    description: "Raw source data loaded by the extractors (Days 8, 10). Faithful copies of source CSVs — defects included."
+    schema: raw
+    tables:
+      - name: population_by_province
+        description: "Population by province — 2024 snapshot. Source: population_by_province_2024.csv"
+        columns:
+          - name: Province
+            description: "Province name (title case, mixed case preserved by pandas to_sql)"
+          - name: Population
+            description: "Province population count"
+          - name: province_code
+            description: "ISO 3166-2:KH province code (e.g. KH-12 for Phnom Penh)"
+      - name: exchange_rate
+        description: "USD/KHR daily exchange rate — 2003-04-01 to 2023-12-31. Documented defects (Day 3): 16 inverted rows, 49 missing days."
+
+  - name: dim
+    description: "Dimensional tables built outside dbt (see sql/ folder). Treated as sources until refactored into dbt models."
+    schema: dim
+    tables:
+      - name: dim_province
+        description: "Canonical 25-province dimension — seeded from controlled reference (Day 13)"
+        columns:
+          - name: province_key
+            description: "Surrogate key (SERIAL)"
+          - name: province_code
+            description: "Natural key — ISO 3166-2:KH"
+          - name: province_name
+            description: "Canonical province name"
+      - name: dim_date
+        description: "Date dimension 2003-04-01 to 2023-12-31, one row per calendar day (Day 10)"
