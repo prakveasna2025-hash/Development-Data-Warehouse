@@ -69,3 +69,48 @@ Unit tests are runnable on every commit
 The extractor aborts without writing when validation fails
 Multiple defects surface together in one run
 Fail-fast holds the line between bad data and the warehouse
+
+## The orchestration meaning:
+In data engineering and software, orchestration means automatically coordinating, scheduling, managing, and monitoring multiple independent tasks or data pipelines so they run in the correct order, at the right time, and handle errors properly.
+
+## For instance: Think of it like a conductor of an orchestra:
+
+** The musicians play the instruments (in your project, your individual Python scripts like extract_population.py, extract_exchange_rate.py, and validate_warehouse.py).
+
+
+** The conductor (like Apache Airflow) doesn't play the instruments themselves; instead, they wave the baton to tell who plays when, ensures everyone starts together, stops anyone who gets out of sync, and handles it if someone misses a beat.
+
+## Why Do We Need Orchestration?
+Without an orchestrator, you have to run everything manually via your terminal (e.g., typing python commands one by one) or rely on rigid operating system timers like Windows Task Scheduler or cron jobs.
+
+## ** An orchestration tool provides four critical superpowers:
+## 1.
+Dependency Management (DAGs):
+It ensures tasks happen in the right sequence. For example: Task C (validation) cannot run until Task A (population extract) and Task B (exchange rate extract) both successfully finish.
+
+## 2. 
+Parallelism & Fan-Out/Fan-In:
+It can run independent tasks simultaneously to save time (running both extractors at the exact same time), then merge them back together.
+
+## 3. 
+Automated Scheduling:
+It runs your pipeline automatically on a set schedule (e.g., every day at midnight).
+
+## 4.
+Retry & Error Handling:
+If a task fails (like a temporary database timeout), the orchestrator can automatically retry it a few times, and if it still fails, it sends an alert so you know something broke instead of silently corrupting your data.
+
+
+## Stagging Concepts:
+In data engineering (especially when using dbt / Data Build Tool), a staging model (often written as stg_) is the very first layer of transformation in your data warehouse.
+
+It sits directly between your raw, messy source data and your clean business tables. Its sole job is to clean up and standardize the raw data without changing its fundamental meaning or structure.
+
+Key Rules of a Staging Model
+1:1 Ratio with Source: There is typically one staging model for every raw table (e.g., raw.population_by_province becomes stg_population).
+
+Grain Stays the Same: If the raw table has 25 rows, the staging model must have 25 rows. You never aggregate, group by, or summarize data in a staging model.
+
+No Joins: Staging models look at one source at a time. You do not join tables together here; joins happen downstream in intermediate or mart models.
+
+View Materialization: Staging models are almost always built as views (not physical tables) in the database. Because they are just views, they don't take up extra storage space and are always fresh when queried.
