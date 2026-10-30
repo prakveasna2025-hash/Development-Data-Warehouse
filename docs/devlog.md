@@ -297,3 +297,39 @@ uv run dbt debug --project-dir cambodia_dw
 - Test script from worker: docker exec airflow-airflow-worker-1 python /opt/airflow/scripts/SCRIPT.py
 - Trigger: UI at http://localhost:8080
 - Check run: docker exec airflow-airflow-scheduler-1 airflow dags list-runs cambodia_pipeline --no-backfill
+
+## Day 18 — Staging: exchange rate
+
+**Built:**
+- `cambodia_dw/models/staging/stg_exchange_rate.sql` — 1:1 view over `raw.exchange_rate`. Renames `spread_market_day_x-1_over_oer_day_x_midpoint` → `spread_value` (hyphens in source name require double quotes AND are unusable downstream). Explicit `::date` / `::bigint` / `::double precision` casts. Loads documented defects as-is (16 inverted rows, 49 missing days, 2,109 midpoint rounding).
+- `cambodia_dw/models/staging/schema.yml` — 17 tests across all three staging models:
+  - `stg_population`: not_null + unique on `province_code`, `province_name`; not_null on `population` (5 tests)
+  - `stg_province`: not_null + unique on `province_key`, `province_code`, `province_name` (6 tests)
+  - `stg_exchange_rate`: not_null + unique on `date`; not_null on `purchase`, `sale`, `midpoint`, `exchange_rate` (6 tests)
+- `cambodia_dw/dbt_project.yml` — removed dead `example:` block (folder deleted Day 17, config was generating an unused-path warning on every `dbt run`).
+
+**Decisions:**
+- **Test scope = not_null + unique only.** No `relationships` (needs stg_dim_date first, out of today's scope). No `accepted_values` (ranges undefined for exchange rates). No custom tests for the Day 3 defects.
+- **Day 3 defects are NOT tested in dbt.** `purchase > sale` on 16 rows would make `dbt test` fail on every run. Defect-count assertions live in `validators.py` (Day 14 — `EXPECTED_INVERTED_ROWS = 16`). dbt tests are structural contracts; validators pin known defects at expected counts. **Mixing them trains people to ignore test failures.**
+- **`spread_value` neutral rename.** Source name is unusable (hyphens, requires quotes in every query). `spread_value` doesn't claim the formula is known — semantics still under investigation (Day 3, source-notes.md).
+- **Kept `::double precision` for float columns.** Source is float (Day 10 — pandas `float64` → Postgres `double precision`). Casting float→numeric doesn't recover lost precision — the precision was lost upstream.
+
+**Issues resolved:**
+- **Unquoted hyphenated identifier** — `spread_market_day_x-1_over_oer_day_x_midpoint` parsed as subtraction (`spread_market_day_x - 1_over_...`) → `trailing junk after numeric literal` error. Fix: `"spread_market_day_x-1_over_oer_day_x_midpoint"` — same identifier-folding rule as Day 8 capitals, extended to punctuation.
+- **Dead `example:` config** — `+enabled: false` on a folder that was deleted generated a warning on every `dbt run`. Removed.
+
+**Verification:**
+- `uv run dbt run --project-dir cambodia_dw` → `PASS=3 WARN=0 ERROR=0`, no unused-path warning
+- `uv run dbt test --project-dir cambodia_dw` → `PASS=17 WARN=0 ERROR=0`
+- `\dv dbt_dev_staging.*` → 3 views
+- Sample query confirms `spread_value` column exists, no quotes needed downstream
+
+**Interview lines:**
+- *"Unquoted identifiers with hyphens are parsed as arithmetic — `spread_market_day_x-1_...` becomes subtraction. Always double-quote: `"spread_market_day_x-1_over_oer_day_x_midpoint"`. Same rule as capitals (Day 8): PostgreSQL folds unquoted identifiers to lowercase and treats punctuation as operators."*
+- *"dbt tests are structural contracts — not_null, unique, relationships. Defect-count assertions (exactly 16 inverted rows) belong in validators, not dbt. Mixing them makes `dbt test` fail on every run, which trains people to ignore alerts."*
+- *"`spread_value` neutral rename — doesn't claim the formula is known. Better than `spread_pct` or `spread_defined` (lies) or the original (unusable downstream)."*
+
+**Commands:**
+- Run: `uv run dbt run --project-dir cambodia_dw`
+- Test: `uv run dbt test --project-dir cambodia_dw`
+- Verify: `docker exec -it cambodia_dw_postgres psql -U airflow -d airflow -c "\dv dbt_dev_staging.*"`

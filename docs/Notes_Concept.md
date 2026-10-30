@@ -114,3 +114,17 @@ Grain Stays the Same: If the raw table has 25 rows, the staging model must have 
 No Joins: Staging models look at one source at a time. You do not join tables together here; joins happen downstream in intermediate or mart models.
 
 View Materialization: Staging models are almost always built as views (not physical tables) in the database. Because they are just views, they don't take up extra storage space and are always fresh when queried.
+
+
+## Upsteam and downsteam:
+In data engineering and software development, downstream refers to anything that happens later in the data flow or processing pipeline.
+
+Think of it like a river: water flows from the source (upstream) down to the ocean (downstream). Wherever you are standing, everything behind you is upstream, and everything in front of you is downstream.
+
+In the Context of Our Pipeline:
+Upstream: The raw data or earlier steps (e.g., your CSV files, Python extractors, and raw schema tables). They feed data into the system.
+
+Downstream: The later layers and consumers of that data (e.g., your dbt staging models, your intermediate transformations, your marts/reporting tables, and final BI dashboards). They rely on the data provided by the earlier steps.
+
+Example in Practice:
+If you change a column name in your staging model (stg_population), any downstream models (like a dashboard or a mart table that uses stg_population) will be affected by that change.
