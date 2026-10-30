@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: stg_population
+    description: "Population by province — 2024 snapshot. 1:1 view over raw.population_by_province."
+    columns:
+      - name: province_code
+        description: "ISO 3166-2:KH province code"
+        tests:
+          - not_null
+          - unique
+      - name: province_name
+        description: "Province name"
+        tests:
+          - not_null
+          - unique
+      - name: population
+        description: "Province population count"
+        tests:
+          - not_null
+
+  - name: stg_province
+    description: "Province dimension — canonical reference. Pass-through over dim.dim_province."
+    columns:
+      - name: province_key
+        description: "Surrogate key (SERIAL)"
+        tests:
+          - not_null
+          - unique
+      - name: province_code
+        description: "ISO 3166-2:KH natural key"
+        tests:
+          - not_null
+          - unique
+      - name: province_name
+        description: "Canonical province name"
+        tests:
+          - not_null
+          - unique
+
+  - name: stg_exchange_rate
+    description: "USD/KHR daily exchange rate, 2003-04-01 to 2023-12-31. 1:1 view over raw.exchange_rate. Defects loaded as-is (see source-notes.md)."
+    columns:
+      - name: date
+        description: "Trading date"
+        tests:
+          - not_null
+          - unique
+      - name: purchase
+        description: "Bank purchase rate (KHR per USD)"
+        tests:
+          - not_null
+      - name: sale
+        description: "Bank sale rate (KHR per USD)"
+        tests:
+          - not_null
+      - name: midpoint
+        description: "Midpoint rate (KHR per USD). Note: 2,109 rows have inconsistent rounding vs (purchase+sale)/2 — see source-notes.md"
+        tests:
+          - not_null
+      - name: exchange_rate
+        description: "Reference exchange rate"
+        tests:
+          - not_null
+      - name: spread_value
+        description: "Renamed from spread_market_day_x-1_over_oer_day_x_midpoint. Semantics under investigation — DO NOT use downstream until defined (see source-notes.md, Day 3)."
