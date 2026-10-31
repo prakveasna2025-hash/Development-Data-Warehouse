@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: dim_province
+    description: "Province dimension — canonical 25 provinces, materialized from seed for reproducibility."
+    columns:
+      - name: province_key
+        tests: [not_null, unique]
+      - name: province_code
+        tests: [not_null, unique]
+      - name: province_name
+        tests: [not_null, unique]
+
+  - name: dim_date
+    description: "Date dimension — 2003-04-01 to 2023-12-31, one row per calendar day."
+    columns:
+      - name: date_key
+        tests: [not_null, unique]
+      - name: date
+        tests: [not_null, unique]
+
+  - name: dim_indicator
+    description: "Indicator catalog — declares measures, units, grains, and source tables."
+    columns:
+      - name: indicator_key
+        tests: [not_null, unique]
+      - name: indicator_code
+        tests: [not_null, unique]
+      - name: indicator_name
+        tests: [not_null]
+      - name: indicator_unit
+        tests: [not_null]
+      - name: indicator_grain
+        tests: [not_null]

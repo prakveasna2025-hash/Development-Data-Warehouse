@@ -1,0 +1,6 @@
+indicator_key,indicator_code,indicator_name,indicator_unit,indicator_grain,indicator_source_table,description
+1,population,Province population,persons,province_snapshot_2024,raw.population_by_province,Population by province 2024 snapshot
+2,exchange_rate_purchase,Bank purchase rate,KHR per USD,date_national,raw.exchange_rate,Rate at which banks buy USD
+3,exchange_rate_sale,Bank sale rate,KHR per USD,date_national,raw.exchange_rate,Rate at which banks sell USD
+4,exchange_rate_midpoint,Midpoint rate,KHR per USD,date_national,raw.exchange_rate,Average of purchase and sale
+5,exchange_rate_reference,Reference rate,KHR per USD,date_national,raw.exchange_rate,NBC reference rate
