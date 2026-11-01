@@ -333,3 +333,57 @@ uv run dbt debug --project-dir cambodia_dw
 - Run: `uv run dbt run --project-dir cambodia_dw`
 - Test: `uv run dbt test --project-dir cambodia_dw`
 - Verify: `docker exec -it cambodia_dw_postgres psql -U airflow -d airflow -c "\dv dbt_dev_staging.*"`
+
+
+
+## Day 19 Phase 1 - Dimensions as dbt mart models
+
+Built: 7 files.
+- seeds/province_reference.csv (25 rows)
+- seeds/indicator_reference.csv (5 rows)
+- models/marts/dim_province.sql
+- models/marts/dim_date.sql
+- models/marts/dim_indicator.sql
+- models/marts/schema.yml (17 tests)
+- dbt_project.yml (marts schema config)
+
+Decisions:
+- Seeds over INSERT SQL for static reference data - versioned, reviewable, reproducible
+- Explicit surrogate keys in seed, not ROW_NUMBER (renumbers on insert)
+- Blue/green migration: Phase 1 = build + verify, Phase 2 = cutover + retire
+- dim_indicator = metric catalog with unit, grain, source table
+- Marts as tables (joined constantly), staging as views (cheap)
+
+Also fixed on Day 19:
+- TRUNCATE + INSERT pattern in both extractors, replacing if_exists=replace
+  Reason: dbt staging views depend on raw.* tables, DROP TABLE fails with DependentObjectsStillExist
+- Removed file=sys.stderr kwarg from logger.error in exchange extractor (would raise TypeError)
+
+Verification:
+- dbt seed PASS=2
+- dbt run PASS=6 (correct schemas after dbt_project.yml fix)
+- dbt test PASS=34
+- Row counts: 25=25 provinces, 7580=7580 dates
+- Set difference: 0 rows
+- Both extractors run standalone from worker: 25 rows and 7531 rows
+- DAG run success x3 with TRUNCATE fix in place
+
+Issues resolved:
+- Schema mapping swapped in dbt_project.yml (fixed via Out-File overwrite)
+- Orphaned objects from wrong-schema build dropped manually
+- DROP TABLE blocked by dbt views (fixed with TRUNCATE + INSERT)
+- Airflow metadata Postgres password mismatch (fixed via ALTER USER)
+
+Interview lines:
+- Blue/green migrations: build alongside old, verify equivalence, cut over, retire
+- Static reference data belongs in seeds (versioned, PR-reviewable)
+- Surrogate keys explicit in seed, not ROW_NUMBER
+- Marts as tables, staging as views - different roles, different materializations
+- TRUNCATE + INSERT preserves dependent views; DROP + CREATE breaks them
+- Daily DAG runs catch regressions; manual runs hide them
+
+Commands:
+- uv run dbt seed --project-dir cambodia_dw
+- uv run dbt run --project-dir cambodia_dw
+- uv run dbt test --project-dir cambodia_dw
+- docker exec airflow-airflow-worker-1 python /opt/airflow/scripts/extract_population.py

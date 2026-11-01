@@ -8,6 +8,10 @@ Validation:
   - Source data is validated BEFORE load (fail-fast, no bad data written)
   - Loaded data is validated AFTER load (verify what's actually in the warehouse)
 
+Load strategy: TRUNCATE + INSERT (not DROP + CREATE).
+Preserves dependent views — dbt staging models (stg_population) depend on
+raw.population_by_province, and DROP TABLE would be blocked by them.
+
 Requires WAREHOUSE_DB_URL environment variable. Set it before running:
   $env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"
 
@@ -76,19 +80,37 @@ def main() -> None:
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
 
-    # 4. Load
-    logger.info(f"\n[4] Writing to {SCHEMA}.{TABLE} (if_exists='replace')")
-    df.to_sql(
-        name=TABLE,
-        con=engine,
-        schema=SCHEMA,
-        if_exists="replace",
-        index=False,
-    )
+    # 4. Load — TRUNCATE + INSERT if table exists; DROP + CREATE only on first run.
+    # DROP + CREATE breaks dependent dbt views (stg_population).
+    qualified = f"{SCHEMA}.{TABLE}"
+    logger.info(f"\n[4] Writing to {qualified} (TRUNCATE + INSERT, preserves dependent views)")
+    with engine.begin() as conn:
+        exists = conn.execute(
+            text(f"SELECT to_regclass('{qualified}')")
+        ).scalar()
+    if not exists:
+        logger.info("    Table does not exist — creating (first run)")
+        df.to_sql(
+            name=TABLE,
+            con=engine,
+            schema=SCHEMA,
+            if_exists="replace",
+            index=False,
+        )
+    else:
+        with engine.begin() as conn:
+            conn.execute(text(f"TRUNCATE TABLE {qualified}"))
+        df.to_sql(
+            name=TABLE,
+            con=engine,
+            schema=SCHEMA,
+            if_exists="append",
+            index=False,
+        )
 
     # 5. Verify loaded data (read back from warehouse, validate again)
     logger.info("\n[5] Verifying loaded data in warehouse")
-    loaded = pd.read_sql(f"SELECT * FROM {SCHEMA}.{TABLE}", engine)
+    loaded = pd.read_sql(f"SELECT * FROM {qualified}", engine)
     logger.info(f"    Rows read back: {len(loaded)}")
 
     errors = validate_population(loaded)
@@ -103,8 +125,7 @@ def main() -> None:
 
     if len(loaded) != len(df):
         logger.error(
-            f"\n✗ Row count mismatch: source={len(df)}, warehouse={len(loaded)}",
-            file=sys.stderr,
+            f"\n✗ Row count mismatch: source={len(df)}, warehouse={len(loaded)}"
         )
         sys.exit(1)
 

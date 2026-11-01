@@ -11,6 +11,10 @@ Note on defects: this source has DOCUMENTED defects (Day 3, docs/source-notes.md
   - spread column semantics unknown
 These are loaded AS-IS. Cleaning belongs in dbt, not in raw extraction.
 
+Load strategy: TRUNCATE + INSERT (not DROP + CREATE).
+Preserves dependent views — dbt staging models (stg_exchange_rate) depend on
+raw.exchange_rate, and DROP TABLE would be blocked by them.
+
 Requires WAREHOUSE_DB_URL environment variable. Set it before running:
   $env:WAREHOUSE_DB_URL = "postgresql+psycopg2://airflow:changeme@127.0.0.1:5434/airflow"
 
@@ -85,20 +89,39 @@ def main() -> None:
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
 
-    # 5. Load — dtype forces PostgreSQL column type to DATE, not TIMESTAMP
-    logger.info(f"\n[4] Writing to {SCHEMA}.{TABLE} (if_exists='replace')")
-    df.to_sql(
-        name=TABLE,
-        con=engine,
-        schema=SCHEMA,
-        if_exists="replace",
-        index=False,
-        dtype={"date": Date},
-    )
+    # 5. Load — TRUNCATE + INSERT preserves dependent dbt views.
+    # dtype=Date only applies on first creation; existing tables keep their DATE type.
+    qualified = f"{SCHEMA}.{TABLE}"
+    logger.info(
+        f"\n[4] Writing to {qualified} (TRUNCATE + INSERT, preserves dependent views)")
+    with engine.begin() as conn:
+        exists = conn.execute(
+            text(f"SELECT to_regclass('{qualified}')")
+        ).scalar()
+    if not exists:
+        logger.info("    Table does not exist — creating (first run)")
+        df.to_sql(
+            name=TABLE,
+            con=engine,
+            schema=SCHEMA,
+            if_exists="replace",
+            index=False,
+            dtype={"date": Date},
+        )
+    else:
+        with engine.begin() as conn:
+            conn.execute(text(f"TRUNCATE TABLE {qualified}"))
+        df.to_sql(
+            name=TABLE,
+            con=engine,
+            schema=SCHEMA,
+            if_exists="append",
+            index=False,
+        )
 
     # 6. Read back and validate
     logger.info("\n[5] Verifying loaded data in warehouse")
-    loaded = pd.read_sql(f"SELECT * FROM {SCHEMA}.{TABLE}", engine)
+    loaded = pd.read_sql(f"SELECT * FROM {qualified}", engine)
     logger.info(f"    Rows read back: {len(loaded)}")
 
     loaded_errors = validate_exchange_rate(loaded)
@@ -113,8 +136,7 @@ def main() -> None:
 
     if len(loaded) != len(df):
         logger.error(
-            f"\n✗ Row count mismatch: source={len(df)}, warehouse={len(loaded)}",
-            file=sys.stderr,
+            f"\n✗ Row count mismatch: source={len(df)}, warehouse={len(loaded)}"
         )
         sys.exit(1)
 
