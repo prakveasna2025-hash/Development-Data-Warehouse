@@ -387,3 +387,49 @@ Commands:
 - uv run dbt run --project-dir cambodia_dw
 - uv run dbt test --project-dir cambodia_dw
 - docker exec airflow-airflow-worker-1 python /opt/airflow/scripts/extract_population.py
+
+
+
+
+## Day 20 - Fact tables
+
+Built: 2 files.
+- models/marts/fact_population.sql - snapshot fact, one row per province per snapshot year (2024)
+- models/marts/fact_exchange_rate.sql - transactional fact, one row per trading date
+- schema.yml extended with relationships tests (FK to dimensions)
+
+Decisions:
+- fact_population grain = (province_key, snapshot_year) not fake daily date_key
+  Fake daily would misrepresent annual snapshot as daily measurement
+- Separate fact tables per measure, not unified fact with indicator_key
+  Population is annual-provincial, exchange rates are daily-national; incompatible grains
+- dim_indicator is documentation catalog, not load-bearing in fact structure
+- spread_value included with SEMANTICS UNKNOWN warning (reflects what was measured)
+- province_code, province_name, date denormalized in facts for BI convenience
+  Cost: 25 rows and 7531 rows of duplicate text. Benefit: no join needed for common queries
+
+Tests added:
+- relationships (FK) tests: fact_population.province_key -> dim_province, fact_exchange_rate.date_key -> dim_date
+- unique on fact_population.province_key (one row per province in this snapshot)
+- unique on fact_exchange_rate.date_key (one row per date)
+
+Issues resolved:
+- Deprecation warning: relationships to:/field: needs to be nested under arguments: in dbt 1.12+
+- Notepad save did not land the first attempt; verified with Select-String before rerun
+
+Verification:
+- dbt run PASS=8 WARN=0 ERROR=0 no deprecation warnings
+- dbt test PASS=45 WARN=0 ERROR=0
+- fact_population: 25 rows, top 3 by population = Phnom Penh, Kandal, Prey Veng
+- fact_exchange_rate: 7531 rows, sample dates show correct surrogate keys
+
+Interview lines:
+- Snapshot facts use period as grain (snapshot_year); faking a date_key misrepresents frequency
+- Fact tables join dimensions via surrogate keys, not natural keys
+- Unified fact with indicator_key only works when all measures share grain
+- Deprecation warnings are technical debt; one line now vs outage at next major upgrade
+- Denormalizing dim text into facts is a real tradeoff; small facts benefit, large facts don't
+
+Commands:
+- uv run dbt run --project-dir cambodia_dw
+- uv run dbt test --project-dir cambodia_dw
