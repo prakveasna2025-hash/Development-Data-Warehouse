@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: dim_province
-    description: "Province dimension — canonical 25 provinces, materialized from seed for reproducibility."
+    description: "Province dimension - canonical 25 provinces, materialized from seed for reproducibility."
     columns:
       - name: province_key
         tests: [not_null, unique]
@@ -12,7 +12,7 @@ models:
         tests: [not_null, unique]
 
   - name: dim_date
-    description: "Date dimension — 2003-04-01 to 2023-12-31, one row per calendar day."
+    description: "Date dimension - 2003-04-01 to 2023-12-31, one row per calendar day."
     columns:
       - name: date_key
         tests: [not_null, unique]
@@ -20,7 +20,7 @@ models:
         tests: [not_null, unique]
 
   - name: dim_indicator
-    description: "Indicator catalog — declares measures, units, grains, and source tables."
+    description: "Indicator catalog - declares measures, units, grains, and source tables."
     columns:
       - name: indicator_key
         tests: [not_null, unique]
@@ -32,3 +32,41 @@ models:
         tests: [not_null]
       - name: indicator_grain
         tests: [not_null]
+
+  - name: fact_population
+    description: "Snapshot fact - one row per province per snapshot year. 2024 only."
+    columns:
+      - name: province_key
+        description: "FK to dim_province.province_key"
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_province')
+                field: province_key
+      - name: snapshot_year
+        tests: [not_null]
+      - name: population
+        tests: [not_null]
+
+  - name: fact_exchange_rate
+    description: "Transactional fact - one row per trading date. Documented defects loaded as-is."
+    columns:
+      - name: date_key
+        description: "FK to dim_date.date_key"
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: date
+        tests: [not_null]
+      - name: purchase
+        tests: [not_null]
+      - name: sale
+        tests: [not_null]
+      - name: spread_value
+        description: "SEMANTICS UNKNOWN. Do not use downstream. See source-notes.md Day 3."
